@@ -1,0 +1,22 @@
+[project]
+name = "bookfinder-api"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "rbgarcia",email = "rbgarcia@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi (>=0.121.3,<0.122.0)",
+    "uvicorn[standard] (>=0.38.0,<0.39.0)",
+    "requests (>=2.32.5,<3.0.0)",
+    "beautifulsoup4 (>=4.14.2,<5.0.0)"
+]
+
+[tool.poetry]
+packages = [{include = "bookfinder_api", from = "src"}]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
