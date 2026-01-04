@@ -2,7 +2,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from .api.routes.health import router as health_router
+from .api.v1.routes.health import router as v1_health_router
+from .api.v1.routes.books import router as v1_book_router
 from .core.data.repository import load_books
 from .core.ingestion.scraper import ensure_books_csv
 
@@ -51,4 +52,5 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-app.include_router(health_router)
+app.include_router(v1_health_router)
+app.include_router(v1_book_router)
