@@ -2,7 +2,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Request
 
-from ...core.ingestion.scraper import get_csv_status
+from ....core.ingestion.scraper import get_csv_status
 
 
 router = APIRouter(tags=['health'])
