@@ -1,16 +1,13 @@
-name: Refresh cache
+- name: Call admin scrape endpoint
+  run: |
+    set -e
+    echo "Calling: ${{ secrets.API_URL }}/api/v1/admin/scrape"
 
-on:
-  schedule:
-    - cron: "0 */6 * * *"
-  workflow_dispatch:
+    curl -sS -f -X POST "${{ secrets.API_URL }}/api/v1/admin/scrape" \
+      -H "x-cron-token: ${{ secrets.CRON_TOKEN }}" \
+      -H "Content-Type: application/json" \
+      -D - \
+      -o response.json
 
-jobs:
-  refresh:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Call admin scrape endpoint
-        run: |
-          curl -sS -X POST "${{ secrets.API_URL }}/v1/admin/scrape" \
-            -H "x-cron-token: ${{ secrets.CRON_TOKEN }}" \
-            -H "Content-Type: application/json"
+    echo "Response body:"
+    cat response.json
