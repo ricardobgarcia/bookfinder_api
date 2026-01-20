@@ -5,13 +5,12 @@ from fastapi import APIRouter, Request, HTTPException, status, Depends
 
 
 from ....core.auth.jwt import create_access_token
-from ....core.auth.deps import require_admin
+from ....core.auth.or_auth import require_admin_or_cron
 from ....core.ingestion.scraper import ensure_books_csv, get_csv_status
 from ....core.data.repository import load_books
 
 
 router = APIRouter(prefix="/admin", tags=["admin"])
-
 
 
 class LoginIn(BaseModel):
@@ -31,7 +30,10 @@ def login(body: LoginIn):
 
 
 @router.post("/scrape", status_code=status.HTTP_201_CREATED)
-def run_scrape(request: Request, _claims=Depends(require_admin)):
+def run_scrape(
+    request: Request,
+    auth_info=Depends(require_admin_or_cron)
+):
     """
     Run the scraper to generate/update the database.
     """
