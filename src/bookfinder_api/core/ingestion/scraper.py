@@ -11,6 +11,7 @@ from urllib.parse import urljoin
 
 import httpx
 from bs4 import BeautifulSoup
+from ..storage.supabase_storage import upload_csv
 
 from ..models.Book import Book
 
@@ -78,6 +79,8 @@ def scrape_all_books_to_csv(csv_path: Path):
     tmp_path = csv_path.with_suffix(".tmp")
     write_books_to_csv(books, tmp_path)
     tmp_path.replace(csv_path)
+
+    upload_csv(csv_path.read_bytes())
 
 
 def scrape_all_books() -> List[Book]:
