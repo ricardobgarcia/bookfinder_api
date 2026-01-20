@@ -14,17 +14,15 @@ from bs4 import BeautifulSoup
 
 from ..models.Book import Book
 
+
 BASE_URL = "https://books.toscrape.com/"
 MAX_AGE = timedelta(days=1)
-
-# Ajuste fino para Vercel (I/O paralelo, sem exagerar)
 DEFAULT_CONCURRENCY = int(os.getenv("SCRAPER_CONCURRENCY", "8"))
 HTTP_TIMEOUT = float(os.getenv("SCRAPER_TIMEOUT", "10"))
 
 
-def _seed_csv_path() -> Path:
-    """Load initial CSV file from repo (read-only in Vercel)."""
-    return Path(__file__).resolve().parents[4] / "data" / "books.csv"
+def _csv_path_readonly() -> Path:
+    return _data_dir() / "books.csv"
 
 
 def _data_dir() -> Path:
@@ -40,7 +38,7 @@ def _csv_path() -> Path:
 
 
 def get_csv_status():
-    csv_path = _csv_path()
+    csv_path = _csv_path_readonly()
     exists = csv_path.exists()
     last_updated = None
     age_seconds = None
@@ -60,7 +58,7 @@ def get_csv_status():
 
 
 def is_csv_fresh() -> bool:
-    csv_path = _csv_path()
+    csv_path = _csv_path_readonly()
     if not csv_path.exists():
         return False
     mtime = datetime.fromtimestamp(csv_path.stat().st_mtime)
@@ -69,11 +67,6 @@ def is_csv_fresh() -> bool:
 
 def ensure_books_csv(force: bool = False):
     csv_path = _csv_path()
-    seed_path = _seed_csv_path()
-
-    if not csv_path.exists() and seed_path.exists():
-        csv_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(seed_path, csv_path)
 
     if force or not is_csv_fresh():
         scrape_all_books_to_csv(csv_path)
