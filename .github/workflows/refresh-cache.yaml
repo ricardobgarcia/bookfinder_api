@@ -12,9 +12,9 @@ jobs:
       - name: Call admin scrape endpoint
         run: |
           set -e
-          echo "Calling: ${{ secrets.API_URL }}/api/v1/admin/scrape"
+          echo "Calling: ${{ secrets.API_URL }}/v1/admin/scrape"
 
-          curl -sS -f -X POST "${{ secrets.API_URL }}/api/v1/admin/scrape" \
+          curl -sS -f -X POST "${{ secrets.API_URL }}/v1/admin/scrape" \
             -H "x-cron-token: ${{ secrets.CRON_TOKEN }}" \
             -H "Content-Type: application/json" \
             -D - \
