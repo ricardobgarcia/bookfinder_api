@@ -1,12 +1,13 @@
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 
+load_dotenv()
+
 from .api.v1.router import router as v1_router
-from .api.v1.routes.health import router as v1_health_router
-from .api.v1.routes.books import router as v1_book_router
 from .core.data.repository import load_books
-from .core.ingestion.scraper import ensure_books_csv
+from .core.ingestion.scraper import get_csv_status
 
 
 @asynccontextmanager
@@ -14,8 +15,7 @@ async def lifespan(app: FastAPI):
     """Application life cycle.
 
     - STARTUP:
-      - Ensures the CSV exists.
-      - Loads the CSV in memory and sets in app.state.books_cache.
+      - Loads the CSV in memory if exists and sets in app.state.books_cache.
 
     - SHUTDOWN:
       - Cache clean-up.
@@ -23,27 +23,31 @@ async def lifespan(app: FastAPI):
     # STARTUP
     print('[LIFESPAN] Starting BookFinder API...')
 
-    ensure_books_csv()
-    print('[LIFESPAN] CSV ensured/updated.')
+    try:
+        status = get_csv_status()
+        print('[LIFESPAN] CSV status checked.')
 
-    app.state.books_cache = load_books()
-    print(
-        f'[LIFESPAN] Books cache loaded with {len(app.state.books_cache)} items.'
-    )
+        if status["exists"]:
+            app.state.books_cache = load_books()
+            print(f"[LIFESPAN] Books cache loaded with {len(app.state.books_cache)} items.")
+        else:
+            app.state.books_cache = []
+            print("[LIFESPAN] CSV not found yet. Cache starts empty. Run /admin/refresh-cache.")
 
-    # Delivers the control to the application
-    yield
+        # Delivers the control to the application
+        yield
 
-    # SHUTDOWN
-    print('[LIFESPAN] Shutting down BookFinder API...')
+    finally:
+        # SHUTDOWN
+        print('[LIFESPAN] Shutting down BookFinder API...')
 
-    # Cache clean-up.
-    if hasattr(app.state, "books_cache"):
-        cache_len = len(app.state.books_cache)
-        app.state.books_cache.clear()
-        print(f'[LIFESPAN] Cleared books cache ({cache_len} entries).')
+        # Cache clean-up.
+        if hasattr(app.state, "books_cache"):
+            cache_len = len(app.state.books_cache)
+            app.state.books_cache.clear()
+            print(f'[LIFESPAN] Cleared books cache ({cache_len} entries).')
 
-    print('[LIFESPAN] Shutdown complete.')
+        print('[LIFESPAN] Shutdown complete.')
 
 
 app = FastAPI(
