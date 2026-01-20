@@ -2,16 +2,18 @@ import csv
 from typing import List, Dict
 
 from bookfinder_api.core.models.Book import Book
-from ..ingestion.scraper import CSV_PATH
+from ..ingestion.scraper import ensure_books_csv, _csv_path
 
 
 def load_books() -> List[Dict]:
-    if not CSV_PATH.exists():
-        raise FileNotFoundError(f"CSV file not found at {CSV_PATH}")
+    ensure_books_csv(force=False)
+    csv_path = _csv_path()
+    if not csv_path.exists():
+        raise FileNotFoundError(f"CSV file not found at {csv_path}")
 
     books: List[Book] = []
 
-    with CSV_PATH.open("r", encoding="utf-8") as f:
+    with csv_path.open("r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for idx, row in enumerate(reader):
             books.append(

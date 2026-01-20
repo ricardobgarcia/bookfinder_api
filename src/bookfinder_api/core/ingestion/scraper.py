@@ -1,32 +1,52 @@
+import asyncio
 import csv
+import os
 import re
-from dataclasses import  asdict
-from pathlib import Path
+import shutil
+from dataclasses import asdict
 from datetime import datetime, timedelta
-from typing import Iterator, List, Dict
+from pathlib import Path
+from typing import Dict, List, Optional
 from urllib.parse import urljoin
 
-
-import requests
+import httpx
 from bs4 import BeautifulSoup
 
 from ..models.Book import Book
 
-
 BASE_URL = "https://books.toscrape.com/"
-DATA_DIR = Path(__file__).resolve().parents[4] / "data"
-DATA_DIR.mkdir(exist_ok=True)
-CSV_PATH = DATA_DIR / "books.csv"
 MAX_AGE = timedelta(days=1)
+
+# Ajuste fino para Vercel (I/O paralelo, sem exagerar)
+DEFAULT_CONCURRENCY = int(os.getenv("SCRAPER_CONCURRENCY", "8"))
+HTTP_TIMEOUT = float(os.getenv("SCRAPER_TIMEOUT", "10"))
+
+
+def _seed_csv_path() -> Path:
+    """Load initial CSV file from repo (read-only in Vercel)."""
+    return Path(__file__).resolve().parents[4] / "data" / "books.csv"
+
+
+def _data_dir() -> Path:
+    if os.getenv("VERCEL") == "1" or os.getenv("VERCEL_ENV") is not None:
+        return Path("/tmp") / "bookfinder_api" / "data"
+    return Path(__file__).resolve().parents[4] / "data"
+
+
+def _csv_path() -> Path:
+    d = _data_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    return d / "books.csv"
 
 
 def get_csv_status():
-    exists = CSV_PATH.exists()
+    csv_path = _csv_path()
+    exists = csv_path.exists()
     last_updated = None
     age_seconds = None
 
     if exists:
-        mtime = datetime.fromtimestamp(CSV_PATH.stat().st_mtime)
+        mtime = datetime.fromtimestamp(csv_path.stat().st_mtime)
         last_updated = mtime
         age_seconds = (datetime.now() - mtime).total_seconds()
 
@@ -35,78 +55,117 @@ def get_csv_status():
         "is_fresh": is_csv_fresh() if exists else False,
         "last_updated": last_updated,
         "age_seconds": age_seconds,
-        "path": str(CSV_PATH),
+        "path": str(csv_path),
     }
 
 
 def is_csv_fresh() -> bool:
-    if not CSV_PATH.exists():
+    csv_path = _csv_path()
+    if not csv_path.exists():
         return False
-    mtime = datetime.fromtimestamp(CSV_PATH.stat().st_mtime)
+    mtime = datetime.fromtimestamp(csv_path.stat().st_mtime)
     return datetime.now() - mtime < MAX_AGE
 
 
-def ensure_books_csv():
-    if not is_csv_fresh():
-        scrape_all_books_to_csv()
+def ensure_books_csv(force: bool = False):
+    csv_path = _csv_path()
+    seed_path = _seed_csv_path()
+
+    if not csv_path.exists() and seed_path.exists():
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(seed_path, csv_path)
+
+    if force or not is_csv_fresh():
+        scrape_all_books_to_csv(csv_path)
 
 
-def scrape_all_books_to_csv():
+def scrape_all_books_to_csv(csv_path: Path):
     books = scrape_all_books()
-    write_books_to_csv(books)
+
+    tmp_path = csv_path.with_suffix(".tmp")
+    write_books_to_csv(books, tmp_path)
+    tmp_path.replace(csv_path)
 
 
 def scrape_all_books() -> List[Book]:
-    all_books: List[Book] = []
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(scrape_all_books_async(concurrency=DEFAULT_CONCURRENCY))
 
-    for cat in iter_categories():
-        category_name = cat["name"]
-        category_url = cat["url"]
-
-        for page_soup in iter_category_pages(category_url):
-            page_books = parse_book_list_page(page_soup, category_name)
-            all_books.extend(page_books)
-
-    return all_books
+    return loop.run_until_complete(scrape_all_books_async(concurrency=DEFAULT_CONCURRENCY))
 
 
-def get_soup(url: str) -> BeautifulSoup:
-    resp = requests.get(url, timeout=10)
-    resp.raise_for_status()
-    return BeautifulSoup(resp.text, "html.parser")
+async def scrape_all_books_async(concurrency: int = DEFAULT_CONCURRENCY) -> List[Book]:
+    sem = asyncio.Semaphore(max(1, concurrency))
+
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(HTTP_TIMEOUT),
+        headers={"User-Agent": "BookFinderBot/1.0"},
+        follow_redirects=True,
+    ) as client:
+        categories = await fetch_categories(client, sem)
+
+        tasks = [
+            scrape_category_all_pages(client, sem, cat_name=cat["name"], cat_url=cat["url"])
+            for cat in categories
+        ]
+
+        results = await asyncio.gather(*tasks)
+        all_books: List[Book] = []
+        for books in results:
+            all_books.extend(books)
+        return all_books
 
 
-def iter_categories() -> Iterator[Dict[str, str]]:
-    """
-    Generate dicts {"name": <category_name>, "url": <category_url>}
-    """
-    soup = get_soup(BASE_URL)
+async def fetch_soup(client: httpx.AsyncClient, sem: asyncio.Semaphore, url: str) -> BeautifulSoup:
+    async with sem:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        return BeautifulSoup(resp.text, "html.parser")
+
+
+async def fetch_categories(client: httpx.AsyncClient, sem: asyncio.Semaphore) -> List[Dict[str, str]]:
+    soup = await fetch_soup(client, sem, BASE_URL)
     ul = soup.select_one("ul.nav-list > li > ul")
     if not ul:
-        return
+        return []
 
+    out: List[Dict[str, str]] = []
     for li in ul.select("li > a"):
         name = li.get_text(strip=True)
         href = li.get("href")
         if not href:
             continue
         url = urljoin(BASE_URL, href)
-        yield {"name": name, "url": url}
+        out.append({"name": name, "url": url})
+    return out
 
 
-def iter_category_pages(category_url: str) -> Iterator[BeautifulSoup]:
-    current_url = category_url
+async def scrape_category_all_pages(
+    client: httpx.AsyncClient,
+    sem: asyncio.Semaphore,
+    cat_name: str,
+    cat_url: str,
+) -> List[Book]:
+    books: List[Book] = []
+    current_url: Optional[str] = cat_url
 
-    while True:
-        soup = get_soup(current_url)
-        yield soup
+    while current_url:
+        soup = await fetch_soup(client, sem, current_url)
+        books.extend(parse_book_list_page(soup, cat_name))
 
         next_link = soup.select_one("li.next > a")
         if not next_link:
             break
 
         href = next_link.get("href")
+        if not href:
+            break
+
         current_url = urljoin(current_url, href)
+
+    return books
 
 
 def parse_book_list_page(soup: BeautifulSoup, category_name: str) -> List[Book]:
@@ -118,9 +177,7 @@ def parse_book_list_page(soup: BeautifulSoup, category_name: str) -> List[Book]:
 
         price_tag = article.select_one("p.price_color")
         price_text = price_tag.get_text(strip=True) if price_tag else ""
-        price_value = 0.0
-        if price_text:
-            price_value = parse_price(price_text)
+        price_value = parse_price(price_text) if price_text else 0.0
 
         rating_tag = article.select_one("p.star-rating")
         rating_value = 0
@@ -134,25 +191,26 @@ def parse_book_list_page(soup: BeautifulSoup, category_name: str) -> List[Book]:
 
         img_tag = article.select_one("img")
         img_src = img_tag.get("src") if img_tag else ""
-        image_url = urljoin(BASE_URL, img_src)
+        image_url = urljoin(BASE_URL, img_src) if img_src else ""
 
-        book = Book(
-            title=title,
-            price=price_value,
-            rating=rating_value,
-            availability=availability,
-            category=category_name,
-            image_url=image_url,
+        books.append(
+            Book(
+                title=title,
+                price=price_value,
+                rating=rating_value,
+                availability=availability,
+                category=category_name,
+                image_url=image_url,
+            )
         )
-        books.append(book)
 
     return books
 
 
-def write_books_to_csv(books: List[Book]) -> None:
+def write_books_to_csv(books: List[Book], path: Path) -> None:
     fieldnames = list(Book.__dataclass_fields__.keys())
 
-    with CSV_PATH.open("w", newline="", encoding="utf-8") as f:
+    with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for book in books:
@@ -165,11 +223,5 @@ def parse_price(price_text: str) -> float:
 
 
 def rating_to_int(rating_class: str) -> int:
-    mapping = {
-        "One": 1,
-        "Two": 2,
-        "Three": 3,
-        "Four": 4,
-        "Five": 5,
-    }
+    mapping = {"One": 1, "Two": 2, "Three": 3, "Four": 4, "Five": 5}
     return mapping.get(rating_class, 0)
