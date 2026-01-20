@@ -10,6 +10,9 @@ router = APIRouter(tags=['health'])
 
 @router.get('/health')
 def health(request: Request):
+    """
+    Get API health status.
+    """
     now = datetime.now()
     csv_status = get_csv_status()
     books_cache = getattr(request.app.state, 'books_cache', [])
