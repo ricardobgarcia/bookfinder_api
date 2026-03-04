@@ -30,7 +30,7 @@ def login(body: LoginIn):
 
 
 @router.post("/scrape", status_code=status.HTTP_201_CREATED)
-def run_scrape(
+async def run_scrape(
     request: Request,
     auth_info=Depends(require_admin_or_cron)
 ):
@@ -38,7 +38,7 @@ def run_scrape(
     Run the scraper to generate/update the database.
     """
     try:
-        ensure_books_csv(force=True)
+        await ensure_books_csv(force=True)
         request.app.state.books_cache = load_books()
         csv_status = get_csv_status()
         books_cache = request.app.state.books_cache
