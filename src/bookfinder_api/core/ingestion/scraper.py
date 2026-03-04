@@ -66,30 +66,24 @@ def is_csv_fresh() -> bool:
     return datetime.now() - mtime < MAX_AGE
 
 
-def ensure_books_csv(force: bool = False):
+async def ensure_books_csv(force: bool = False):
     csv_path = _csv_path()
 
     if force or not is_csv_fresh():
-        scrape_all_books_to_csv(csv_path)
+        await scrape_all_books_to_csv(csv_path)
 
 
-def scrape_all_books_to_csv(csv_path: Path):
-    books = scrape_all_books()
+async def scrape_all_books_to_csv(csv_path: Path):
+    books = await scrape_all_books_async(concurrency=DEFAULT_CONCURRENCY)
 
     tmp_path = csv_path.with_suffix(".tmp")
+    await asyncio.to_thread(_write_and_upload, books, tmp_path, csv_path)
+
+
+def _write_and_upload(books: List[Book], tmp_path: Path, csv_path: Path) -> None:
     write_books_to_csv(books, tmp_path)
     tmp_path.replace(csv_path)
-
     upload_csv(csv_path.read_bytes())
-
-
-def scrape_all_books() -> List[Book]:
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(scrape_all_books_async(concurrency=DEFAULT_CONCURRENCY))
-
-    return loop.run_until_complete(scrape_all_books_async(concurrency=DEFAULT_CONCURRENCY))
 
 
 async def scrape_all_books_async(concurrency: int = DEFAULT_CONCURRENCY) -> List[Book]:

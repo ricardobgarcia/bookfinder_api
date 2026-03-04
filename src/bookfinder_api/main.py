@@ -7,7 +7,6 @@ load_dotenv()
 
 from .api.v1.router import router as v1_router
 from .core.data.repository import load_books
-from .core.ingestion.scraper import get_csv_status
 
 
 @asynccontextmanager
@@ -24,15 +23,12 @@ async def lifespan(app: FastAPI):
     print('[LIFESPAN] Starting BookFinder API...')
 
     try:
-        status = get_csv_status()
-        print('[LIFESPAN] CSV status checked.')
-
-        if status["exists"]:
+        try:
             app.state.books_cache = load_books()
             print(f"[LIFESPAN] Books cache loaded with {len(app.state.books_cache)} items.")
-        else:
+        except Exception as e:
             app.state.books_cache = []
-            print("[LIFESPAN] CSV not found yet. Cache starts empty. Run /admin/refresh-cache.")
+            print(f"[LIFESPAN] Could not load books ({type(e).__name__}: {e}). Cache starts empty. Run /admin/scrape.")
 
         # Delivers the control to the application
         yield
